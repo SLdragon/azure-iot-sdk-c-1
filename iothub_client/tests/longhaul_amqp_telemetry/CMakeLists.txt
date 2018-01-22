@@ -30,17 +30,20 @@ if(${set_trusted_cert_in_samples})
 	set(samples_cert_file ${PROJECT_SOURCE_DIR}/certs/certs.c)
 endif()
 
+include_directories(${IOTHUB_TEST_INC_FOLDER})
+include_directories(${IOTHUB_SERVICE_CLIENT_INC_FOLDER})
 include_directories(.)
 
 add_executable(longhaul_amqp_telemetry ${longhaul_amqp_telemetry_c_files} ${longhaul_amqp_telemetry_h_files} ${samples_cert_file})
 
 target_link_libraries(longhaul_amqp_telemetry
+		iothub_test
 		iothub_client
 		iothub_client_amqp_transport)
 
 set_target_properties(longhaul_amqp_telemetry
                    PROPERTIES
-                   FOLDER "tests/Longhaul")
-		
+                   FOLDER "tests/LongHaul")
+				   
 linkSharedUtil(longhaul_amqp_telemetry)
 linkUAMQP(longhaul_amqp_telemetry)

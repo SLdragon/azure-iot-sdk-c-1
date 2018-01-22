@@ -12,6 +12,8 @@
 #include "iothub_client_options.h"
 #include "iothub_message.h"
 #include "iothubtransportamqp.h"
+#include "iothub_account.h"
+#include "iothubtest.h"
 
 #ifdef MBED_BUILD_TIMESTAMP
 #define SET_TRUSTED_CERT_IN_SAMPLES
@@ -20,6 +22,39 @@
 #ifdef SET_TRUSTED_CERT_IN_SAMPLES
 #include "certs.h"
 #endif // SET_TRUSTED_CERT_IN_SAMPLES
+
+
+IOTHUB_ACCOUNT_INFO_HANDLE g_iothubAcctInfo = NULL;
+
+static int e2e_init()
+{
+    int result;
+    
+    if (platform_init() != 0)
+    {
+        result = __FAILURE__;
+    }
+    else
+    {
+        g_iothubAcctInfo = IoTHubAccount_Init();
+        platform_init();
+        result = 0;
+    }
+
+    return result;
+}
+
+static void e2e_deinit()
+{
+    IoTHubAccount_deinit(g_iothubAcctInfo);
+
+    // Need a double deinit
+    platform_deinit();
+    platform_deinit();
+}
+
+
+
 
 /*String containing Hostname, Device Id & Device Key in the format:                         */
 /*  "HostName=<host_name>;DeviceId=<device_id>;SharedAccessKey=<device_key>"                */
