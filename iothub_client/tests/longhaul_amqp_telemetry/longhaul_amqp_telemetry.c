@@ -24,34 +24,145 @@
 #include "certs.h"
 #endif // SET_TRUSTED_CERT_IN_SAMPLES
 
+#define INDEFINITE_TIME ((time_t)-1)
 
-
-
-typedef struct CONNECTION_STATUS_DATA_TAG
+typedef struct bla_tag
 {
-    LOCK_HANDLE lock;
-    size_t count;
-    IOTHUB_CLIENT_CONNECTION_STATUS previous_status;
-    IOTHUB_CLIENT_CONNECTION_STATUS_REASON previous_reason;
-    IOTHUB_CLIENT_CONNECTION_STATUS current_status;
-    IOTHUB_CLIENT_CONNECTION_STATUS_REASON current_reason;
+    time_t time_sent;
+    time_t time_received;
+} bla;
+
+typedef struct CONNECTION_STATUS_INFO_TAG
+{
+    time_t time;
+    IOTHUB_CLIENT_CONNECTION_STATUS status;
+    IOTHUB_CLIENT_CONNECTION_STATUS_REASON reason;
 } CONNECTION_STATUS_INFO;
 
+typedef struct IOTHUB_CLIENT_STATISTICS_TAG
+{
+    SINGLYLINKEDLIST_HANDLE connection_status_history;
+} IOTHUB_CLIENT_STATISTICS;
+
+typedef IOTHUB_CLIENT_STATISTICS* IOTHUB_CLIENT_STATISTICS_HANDLE;
+
+static bool destroy_connection_status_info(const void* item, const void* match_context, bool* continue_processing)
+{
+    free(item);
+    *continue_processing = true;
+    return true;
+}
+
+static void iothub_client_statistics_destroy(IOTHUB_CLIENT_STATISTICS_HANDLE handle)
+{
+    if (handle != NULL)
+    {
+        IOTHUB_CLIENT_STATISTICS_HANDLE stats = (IOTHUB_CLIENT_STATISTICS*)handle;
+
+        singlylinkedlist_remove_if(stats->connection_status_history, destroy_connection_status_info, NULL);
+        singlylinkedlist_destroy(stats->connection_status_history);
+
+        free(handle);
+    }
+}
+
+static IOTHUB_CLIENT_STATISTICS_HANDLE iothub_client_statistics_create()
+{
+    IOTHUB_CLIENT_STATISTICS* stats;
+
+    if ((stats = ((IOTHUB_CLIENT_STATISTICS*)malloc(sizeof(IOTHUB_CLIENT_STATISTICS)))) == NULL)
+    {
+        LogError("Failed allocating IOTHUB_CLIENT_STATISTICS");
+    }
+    else if ((stats->connection_status_history = singlylinkedlist_create()) == NULL)
+    {
+        LogError("Failed creating list for connection status info");
+        iothub_client_statistics_destroy(stats);
+        stats = NULL;
+    }
+
+    return stats;
+}
+
+static char* iothub_client_statistics_to_json(IOTHUB_CLIENT_STATISTICS_HANDLE handle)
+{
+    char* result;
+
+    if (handle == NULL)
+    {
+        LogError("Invalid argument (handle is NULL)");
+        result = NULL;
+    }
+    else
+    {
+        IOTHUB_CLIENT_STATISTICS_HANDLE stats = (IOTHUB_CLIENT_STATISTICS*)handle;
+
+    }
+
+    return result;
+}
+
+static void iothub_client_statistics_add_connection_status(IOTHUB_CLIENT_STATISTICS_HANDLE handle, IOTHUB_CLIENT_CONNECTION_STATUS status, IOTHUB_CLIENT_CONNECTION_STATUS_REASON reason)
+{
+    int result;
+
+    if (handle == NULL)
+    {
+        LogError("Invalid argument (handle is NULL)");
+        result = __FAILURE__;
+    }
+    else
+    {
+        CONNECTION_STATUS_INFO* conn_status;
+
+        if ((conn_status = (CONNECTION_STATUS_INFO*)malloc(sizeof(CONNECTION_STATUS_INFO))) == NULL)
+        {
+            LogError("Failed allocating CONNECTION_STATUS_INFO");
+            result = __FAILURE__;
+        }
+        else
+        {
+            IOTHUB_CLIENT_STATISTICS_HANDLE stats = (IOTHUB_CLIENT_STATISTICS*)handle;
+
+            if (singlylinkedlist_add(stats->connection_status_history, conn_status) != 0)
+            {
+                LogError("Failed adding CONNECTION_STATUS_INFO");
+                result = __FAILURE__;
+            }
+            else
+            {
+                conn_status->status = status;
+                conn_status->reason = reason;
+
+                if ((conn_status->time = time(NULL)) == INDEFINITE_TIME)
+                {
+                    LogError("Failed setting the connection status info time");
+                }
+                
+                result = 0;
+            }
+        }
+    }
+    
+    return result;
+}
+
+
 static IOTHUB_ACCOUNT_INFO_HANDLE g_iothubAcctInfo = NULL;
-static CONNECTION_STATUS_INFO g_connectionStatus;
+static IOTHUB_CLIENT_STATISTICS_HANDLE g_iotHubClientStats = NULL;
 
 static void test_platform_deinit()
 {
-    if (g_connectionStatus.lock != NULL)
-    {
-        Lock_Deinit(g_connectionStatus.lock);
-        g_connectionStatus.lock = NULL;
-    }
-
     if (g_iothubAcctInfo != NULL)
     {
         IoTHubAccount_deinit(g_iothubAcctInfo);
         g_iothubAcctInfo = NULL;
+    }
+
+    if (g_iotHubClientStats != NULL)
+    {
+        iothub_client_statistics_destroy(g_iotHubClientStats);
+        g_iotHubClientStats = NULL;
     }
 
     // Need a double deinit
@@ -63,23 +174,25 @@ static int test_platform_init()
 {
     int result;
     
-    memset(&g_connectionStatus, 0, sizeof(CONNECTION_STATUS_INFO));
-
-    if ((g_connectionStatus.lock = Lock_Init()) == NULL)
+    if (platform_init() != 0)
     {
-        LogError("Failed creating connection status lock handle");
+        result = __FAILURE__;
+    }
+    else if ((g_iothubAcctInfo = IoTHubAccount_Init()) == NULL)
+    {
+        LogError("Failed initializing accounts");
         test_platform_deinit();
         result = __FAILURE__;
     }
-    else if (platform_init() != 0)
+    else if ((g_iotHubClientStats = iothub_client_statistics_create()) == NULL)
     {
+        LogError("Failed initializing statistics");
+        test_platform_deinit();
         result = __FAILURE__;
     }
     else
     {
-        g_iothubAcctInfo = IoTHubAccount_Init();
         platform_init();
-
         result = 0;
     }
 
@@ -88,25 +201,9 @@ static int test_platform_init()
 
 static void connection_status_callback(IOTHUB_CLIENT_CONNECTION_STATUS status, IOTHUB_CLIENT_CONNECTION_STATUS_REASON reason, void* userContextCallback)
 {
-    CONNECTION_STATUS_INFO* connection_status_info = (CONNECTION_STATUS_INFO*)userContextCallback;
+    IOTHUB_CLIENT_STATISTICS_HANDLE stats_handle = (IOTHUB_CLIENT_STATISTICS_HANDLE)userContextCallback;
 
-    if (Lock(connection_status_info->lock) != LOCK_OK)
-    {
-        LogError("Unable to lock connection status info");
-    }
-    else
-    {
-        connection_status_info->previous_status = connection_status_info->current_status;
-        connection_status_info->previous_reason = connection_status_info->current_reason;
-        connection_status_info->current_status = status;
-        connection_status_info->current_reason = reason;
-        connection_status_info->count++;
-
-        if (Unlock(connection_status_info->lock) != LOCK_OK)
-        {
-            LogError("Unable to unlock connection status info");
-        }
-    }
+    (void)iothub_client_statistics_add_connection_status(stats_handle, status, reason);
 }
 
 static IOTHUBMESSAGE_DISPOSITION_RESULT c2d_message_received_callback(IOTHUB_MESSAGE_HANDLE message, void* userContextCallback)
@@ -240,13 +337,13 @@ static IOTHUB_CLIENT_HANDLE device_client_create_and_connect(IOTHUB_PROVISIONED_
         (void)IoTHubClient_SetOption(iotHubClientHandle, OPTION_SERVICE_SIDE_KEEP_ALIVE_FREQ_SECS, &svc2cl_keep_alive_timeout_secs);
         (void)IoTHubClient_SetOption(iotHubClientHandle, OPTION_REMOTE_IDLE_TIMEOUT_RATIO, &cl2svc_keep_alive_send_ratio);
 
-        if (IoTHubClient_SetConnectionStatusCallback(iotHubClientHandle, connection_status_callback, &g_connectionStatus) != IOTHUB_CLIENT_OK)
+        if (IoTHubClient_SetConnectionStatusCallback(iotHubClientHandle, connection_status_callback, g_iotHubClientStats) != IOTHUB_CLIENT_OK)
         {
             LogError("Failed setting the connection status callback");
             IoTHubClient_Destroy(iotHubClientHandle);
             iotHubClientHandle = NULL;
         }
-        else if (IoTHubClient_SetMessageCallback(iotHubClientHandle, c2d_message_received_callback, BLABLA) != IOTHUB_CLIENT_OK)
+        else if (IoTHubClient_SetMessageCallback(iotHubClientHandle, c2d_message_received_callback, g_iotHubClientStats) != IOTHUB_CLIENT_OK)
         {
             LogError("Failed to set the cloud-to-device message callback");
             IoTHubClient_Destroy(iotHubClientHandle);
@@ -261,59 +358,30 @@ static IOTHUB_CLIENT_HANDLE device_client_create_and_connect(IOTHUB_PROVISIONED_
     return iotHubClientHandle;
 }
 
-typedef struct bla_tag
-{
-    time_t time_sent;
-    time_t time_received;
-} bla;
-
-typedef struct CONNECTION_STATUS_INFO_TAG
-{
-    time_t time;
-    IOTHUB_CLIENT_CONNECTION_STATUS status;
-    IOTHUB_CLIENT_CONNECTION_STATUS_REASON reason;
-} CONNECTION_STATUS_INFO;
-
-typedef struct IOTHUB_CLIENT_STATISTICS_TAG
-{
-    SINGLYLINKEDLIST_HANDLE connection_status_history;
-} IOTHUB_CLIENT_STATISTICS;
-
-typedef IOTHUB_CLIENT_STATISTICS* IOTHUB_CLIENT_STATISTICS_HANDLE;
-
-static IOTHUB_CLIENT_STATISTICS_HANDLE iothub_client_statistics_create()
-{
-
-}
-
-static char* iothub_client_statistics_to_json(IOTHUB_CLIENT_STATISTICS_HANDLE handle)
-{
-    char* result;
-
-    if (handle == NULL)
-    {
-
-    }
-
-    return result;
-}
-
-static void iothub_client_statistics_create()
-{
-
-}
-
-static void iothub_client_statistics_destroy(IOTHUB_CLIENT_STATISTICS_HANDLE handle)
-{
-    if (handle != NULL)
-    {
-        free(handle);
-    }
-}
-
-static int send_one_telemetry_message()
+static int send_one_telemetry_message(IOTHUB_CLIENT_HANDLE iotHubClientHandle, IOTHUB_CLIENT_STATISTICS_HANDLE iotHubClientStatsHandle)
 {
     int result;
+
+    sprintf_s(msgText, sizeof(msgText), "{\"deviceId\":\"myFirstDevice\",\"windSpeed\":%.2f}", avgWindSpeed + (rand() % 4 + 2));
+    if ((messages[iterator].messageHandle = IoTHubMessage_CreateFromByteArray((const unsigned char*)msgText, strlen(msgText))) == NULL)
+    {
+        (void)printf("ERROR: iotHubMessageHandle is NULL!\r\n");
+    }
+    else
+    {
+        messages[iterator].messageTrackingId = iterator;
+
+
+        if (IoTHubClient_SendEventAsync(iotHubClientHandle, messages[iterator].messageHandle, SendConfirmationCallback, &messages[iterator]) != IOTHUB_CLIENT_OK)
+        {
+            LogError("Failed sending telemetry message");
+            result = __FAILURE__;
+        }
+        else
+        {
+            result = 0;
+        }
+    }
 
     return result;
 }
@@ -347,73 +415,72 @@ static void SendConfirmationCallback(IOTHUB_CLIENT_CONFIRMATION_RESULT result, v
     IoTHubMessage_Destroy(eventInstance->messageHandle);
 }
 
-void iothub_client_sample_amqp_run(void)
+static int longhaul_amqp_telemetry_run(void)
 {
+    int result;
     IOTHUB_CLIENT_HANDLE iotHubClientHandle;
-
-    EVENT_INSTANCE messages[MESSAGE_COUNT];
-
-    g_continueRunning = true;
-    srand((unsigned int)time(NULL));
-    double avgWindSpeed = 10.0;
-
-    callbackCounter = 0;
-    int receiveContext = 0;
-
-    (void)printf("Starting the IoTHub client sample AMQP...\r\n");
+    double test_duration_in_seconds = 12 * 60 * 60;
+    size_t test_loop_wait_time_in_seconds = 60;
 
     if (test_platform_init() != 0)
     {
         LogError("Test failed");
+        result = __FAILURE__;
     }
     else
     {
         if ((iotHubClientHandle = device_client_create_and_connect(IoTHubAccount_GetSASDevice(g_iothubAcctInfo), AMQP_Protocol)) == NULL)
         {
-            (void)printf("ERROR: iotHubClientHandle is NULL!\r\n");
+            LogError("Failed creating the device client");
+            result = __FAILURE__;
         }
         else
         {
-            /* Now that we are ready to receive commands, let's send some messages */
-            size_t iterator = 0;
-            do
+            time_t test_start_time;
+
+            if ((test_start_time = time(NULL)) == INDEFINITE_TIME)
             {
-                if (iterator < MESSAGE_COUNT)
+                LogError("Failed creating the device client");
+                result = __FAILURE__;
+            }
+            else
+            {
+                time_t test_current_time;
+
+                do
                 {
-                    sprintf_s(msgText, sizeof(msgText), "{\"deviceId\":\"myFirstDevice\",\"windSpeed\":%.2f}", avgWindSpeed + (rand() % 4 + 2));
-                    if ((messages[iterator].messageHandle = IoTHubMessage_CreateFromByteArray((const unsigned char*)msgText, strlen(msgText))) == NULL)
+                    if (send_one_telemetry_message(iotHubClientHandle, g_iotHubClientStats) != 0)
                     {
-                        (void)printf("ERROR: iotHubMessageHandle is NULL!\r\n");
+                        LogError("Failed getting the current time");
+                        result = __FAILURE__;
+                        break;
                     }
                     else
                     {
-                        messages[iterator].messageTrackingId = iterator;
+                        ThreadAPI_Sleep(test_loop_wait_time_in_seconds);
 
-
-                        if (IoTHubClient_SendEventAsync(iotHubClientHandle, messages[iterator].messageHandle, SendConfirmationCallback, &messages[iterator]) != IOTHUB_CLIENT_OK)
+                        if ((test_current_time = time(NULL)) == INDEFINITE_TIME)
                         {
-                            (void)printf("ERROR: IoTHubClient_SendEventAsync..........FAILED!\r\n");
-                        }
-                        else
-                        {
-                            (void)printf("IoTHubClient_SendEventAsync accepted data for transmission to IoT Hub.\r\n");
+                            LogError("Failed getting the current time");
+                            result = __FAILURE__;
+                            break;
                         }
                     }
-                }
-                ThreadAPI_Sleep(1);
+                } while (difftime(test_current_time, test_start_time) < test_duration_in_seconds);
+            }
 
-                iterator++;
-            } while (g_continueRunning);
+            result = 0;
 
             IoTHubClient_Destroy(iotHubClientHandle);
         }
 
         test_platform_deinit();
     }
+
+    return result;
 }
 
 int main(void)
 {
-    iothub_client_sample_amqp_run();
-    return 0;
+    return longhaul_amqp_telemetry_run();
 }
