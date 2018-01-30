@@ -57,6 +57,12 @@ TEST_DEFINE_ENUM_TYPE(IOTHUB_CLIENT_RESULT, IOTHUB_CLIENT_RESULT_VALUES);
 #define UPLOADTOBLOB_E2E_TEST_MULTI_BLOCK_DESTINATION_FILE "hello_world_multiblock.txt"
 #define UPLOADTOBLOB_E2E_TEST_DATA (const unsigned char*)"e2e_UPLOADTOBLOB_CALLBACK test data"
 
+#define UPLOADTOBLOB_E2E_TEST_DESTINATION_FILE1 "hello_world1.txt"
+#define UPLOADTOBLOB_E2E_TEST_DESTINATION_FILE2 "hello_world2.txt"
+#define UPLOADTOBLOB_E2E_TEST_DESTINATION_FILE3 "hello_world3.txt"
+#define UPLOADTOBLOB_E2E_TEST_DESTINATION_FILE4 "hello_world4.txt"
+#define UPLOADTOBLOB_E2E_TEST_DESTINATION_FILE5 "hello_world5.txt"
+
 #define UPLOADTOBLOB_E2E_TEST_MULTI_BLOCK_DESTINATION_FILE1 "hello_world_multiblock.txt"
 
 static int bool_Compare(bool left, bool right)
@@ -334,12 +340,14 @@ void e2e_uploadtoblob_test_multi_threaded(IOTHUB_CLIENT_TRANSPORT_PROVIDER proto
     ASSERT_IS_NOT_NULL_WITH_MSG(iotHubClientHandle, "Could not invoke IoTHubClient_CreateFromConnectionString");
 
     UPLOADTOBLOB_CALLBACK_STATUS uploadToBlobStatus[TEST_MAX_SIMULTANEOUS_UPLOADS];
+    const char* uploadFileNameList[] = { UPLOADTOBLOB_E2E_TEST_DESTINATION_FILE1, UPLOADTOBLOB_E2E_TEST_DESTINATION_FILE2, UPLOADTOBLOB_E2E_TEST_DESTINATION_FILE3, UPLOADTOBLOB_E2E_TEST_DESTINATION_FILE4, UPLOADTOBLOB_E2E_TEST_DESTINATION_FILE5 };
 
     // Fire off TEST_MAX_SIMULTANEOUS_UPLOADS simultaneous upload requests.  These will fire in parallel.
     for (int i = 0; i < TEST_MAX_SIMULTANEOUS_UPLOADS; i++)
     {
+        const char* uploadFileName = uploadFileNameList[i];
         uploadToBlobStatus[i] = UPLOADTOBLOB_CALLBACK_PENDING;
-        result = IoTHubClient_UploadToBlobAsync(iotHubClientHandle, UPLOADTOBLOB_E2E_TEST_DESTINATION_FILE, UPLOADTOBLOB_E2E_TEST_DATA, strlen((const char*)UPLOADTOBLOB_E2E_TEST_DATA), uploadToBlobCallback, &uploadToBlobStatus[i]);
+        result = IoTHubClient_UploadToBlobAsync(iotHubClientHandle, uploadFileName, UPLOADTOBLOB_E2E_TEST_DATA, strlen(uploadFileName), uploadToBlobCallback, &uploadToBlobStatus[i]);
         ASSERT_ARE_EQUAL_WITH_MSG(IOTHUB_CLIENT_RESULT, IOTHUB_CLIENT_OK, result, "Could not IoTHubClient_UploadToBlobAsync");
     }
 
@@ -348,7 +356,7 @@ void e2e_uploadtoblob_test_multi_threaded(IOTHUB_CLIENT_TRANSPORT_PROVIDER proto
     // Poll for completion, looping one at a time.
     for (int i = 0; i < TEST_MAX_SIMULTANEOUS_UPLOADS; i++)
     {
-        printf("waiting for context for(%p)\n", &uploadToBlobStatus[i]);
+        printf("waiting for context for context(%p), file(%s)\n", &uploadToBlobStatus[i], uploadFileNameList[i]);
         poll_for_upload_completion(&uploadToBlobStatus[i]);
         check_upload_result(uploadToBlobStatus[i]);
     }
