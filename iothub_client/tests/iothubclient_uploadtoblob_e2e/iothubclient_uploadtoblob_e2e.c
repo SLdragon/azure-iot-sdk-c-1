@@ -364,7 +364,7 @@ void e2e_uploadtoblob_test_multi_threaded(IOTHUB_CLIENT_TRANSPORT_PROVIDER proto
     // Even though we had multiple simultaneous threads, expect them to complete in reasonable time (*2 to allow
     // for additional server load).
     time_t endOperation = time(NULL);
-    ASSERT_ARE_EQUAL_WITH_MSG(bool, true, difftime(endOperation, beginOperation) < IOTHUB_UPLOADTOBLOB_TIMEOUT_SEC * 2, "Multithreaded upload took longer than allowed");
+    ASSERT_ARE_EQUAL_WITH_MSG(bool, true, (difftime(endOperation, beginOperation) < IOTHUB_UPLOADTOBLOB_TIMEOUT_SEC * 2) ? true : false, "Multithreaded upload took longer than allowed");
 
     IoTHubClient_Destroy(iotHubClientHandle);
 }
