@@ -5,13 +5,13 @@
 set -e
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
-build_root=$(cd "${script_dir}/../.." && pwd)
+build_root=$(cd "${script_dir}/.." && pwd)
 build_folder=$build_root"/cmake/iotsdk_wolfssl"
 
 rm -r -f $build_folder
 mkdir -p $build_folder
 pushd $build_folder
-cmake -Drun_e2e_tests:BOOL=ON -Drun_sfc_tests:BOOL=OFF -Drun_unittests:BOOL=ON -Duse_prov_client:BOOL=ON $build_root
+cmake -Duse_wolfssl=ON -Duse_openssl=OFF -Drun_e2e_tests:BOOL=ON -Drun_sfc_tests:BOOL=OFF -Drun_unittests:BOOL=ON -Duse_prov_client:BOOL=ON $build_root
 
 # Set the default cores
 CORES=$(grep -c ^processor /proc/cpuinfo 2>/dev/null || sysctl -n hw.ncpu)
